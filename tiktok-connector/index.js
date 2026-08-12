@@ -68,30 +68,9 @@ connection.connect()
     process.exit(1);
   });
 
-// Tambahkan ini untuk debug
-connection.on('*', (event, data) => {
-  console.log(`📦 Event: ${event}`, data?.user?.uniqueId, data?.comment);
-});
-
-// Atau coba semua kemungkinan:
-connection.on('comment', (data) => {
-  console.log(`💬 COMMENT: ${data.user.uniqueId}: ${data.comment}`);
-  forwardComment(data.user.uniqueId, data.comment);
-});
-
-connection.on('message', (data) => {
-  console.log(`💬 MESSAGE: ${data.user.uniqueId}: ${data.comment}`);
-  forwardComment(data.user.uniqueId, data.comment);
-});
-
-connection.on('chat', (data) => {
-  console.log(`💬 CHAT: ${data.user.uniqueId}: ${data.comment}`);
-  forwardComment(data.user.uniqueId, data.comment);
-});
-
 // Yang asli pake WebcastEvent.CHAT
 connection.on(WebcastEvent.CHAT, (data) => {
-  console.log(`💬 CHAT EVENT: ${data.user.uniqueId}: ${data.comment}`);
+  console.log('📦 Full CHAT data:', JSON.stringify(data, null, 2)); // TAMBAHKAN INI
   forwardComment(data.user.uniqueId, data.comment);
 });
 
