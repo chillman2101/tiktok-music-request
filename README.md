@@ -101,6 +101,31 @@ Setting-an ini disimpan di `backend/config.json` (persist antar restart
 proses, tapi nggak persist lintas redeploy Railway kecuali dipasangin
 volume — sama kayak keterbatasan in-memory queue).
 
+Panel "Sedang diputar & antrian" di CMS yang sama juga bisa buat:
+- **Tambah lagu manual** (nggak lewat chat sama sekali — langsung dari CMS)
+- **Skip** lagu yang lagi diputar
+- **Hapus** satu lagu spesifik dari antrian
+- **Clear semua** antrian
+- **Drag-and-drop** buat geser urutan antrian (kecuali lagu yang lagi diputar)
+
+### Soal duplikat comment pas redeploy
+
+Kalau kamu notice ada `!play`/`!skip` yang keproses dua kali pas abis
+redeploy — itu bukan gara-gara filter 10 detik di `tiktok-connector`
+(itu cuma buat nyaring backlog abis reconnect network putus, bukan
+buat kasus ini). Penyebabnya: Railway (dan platform serupa) sering
+jalanin container lama & baru **bersamaan sebentar** pas rolling deploy,
+jadi dua proses `tiktok-connector` sempat connect ke room yang sama dan
+forward comment live yang sama persis, dari dua proses independen yang
+nggak saling tau.
+
+Fix-nya: dedup sekarang dipusatkan di **backend** (bukan di connector),
+pakai `msgId` asli dari TikTok yang dikirim di setiap request ke
+`/api/comment`. Karena backend cuma ada satu instance yang nerima dari
+kedua proses connector itu, duplikat dari overlap-deploy ke-detect di
+situ — bukan lagi mengandalkan Set di memory tiap proses connector yang
+independen satu sama lain.
+
 ### Deploy ke Railway (3 service dari repo yang sama)
 
 Buat 3 service, masing-masing dengan **root directory** yang beda:

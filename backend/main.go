@@ -19,6 +19,11 @@ var adminFS embed.FS
 type CommentPayload struct {
 	Username string `json:"username"`
 	Comment  string `json:"comment"`
+	// MsgID is TikTok's own per-message identifier, forwarded by
+	// tiktok-connector. Optional — manual curl testing can omit it and
+	// every request is treated as unique. See dedup.go for why this
+	// check lives here rather than in the connector.
+	MsgID string `json:"msgId"`
 }
 
 func authorized(r *http.Request, token string) bool {
@@ -61,6 +66,7 @@ func main() {
 	pending := NewPendingQueue()
 	hub := NewHub()
 	player := NewPlayer(queue, hub)
+	seenComments := NewSeenSet(1000)
 
 	defaultBroadcaster := os.Getenv("BROADCASTER_USERNAME")
 	if defaultBroadcaster == "" {
@@ -99,6 +105,16 @@ func main() {
 		var payload CommentPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
+			return
+		}
+
+		// Dedup by TikTok's own message ID, centralized here rather than
+		// in tiktok-connector — see dedup.go for why (rolling-deploy
+		// overlap can mean two connector instances briefly forward the
+		// same live comment).
+		if seenComments.CheckAndAdd(payload.MsgID) {
+			log.Printf("⏭️ Duplicate comment ignored (msgId=%s)", payload.MsgID)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
@@ -275,6 +291,42 @@ func main() {
 		queue.Clear()
 		hub.Broadcast(queue)
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// POST /api/admin/add - manually add a song to the queue from the
+	// admin CMS, bypassing chat entirely (and bypassing auto-approve,
+	// since the broadcaster adding it directly IS the approval).
+	mux.HandleFunc("/api/admin/add", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Query) == "" {
+			http.Error(w, "expected non-empty \"query\"", http.StatusBadRequest)
+			return
+		}
+
+		result, err := ResolveSong(body.Query)
+		if err != nil {
+			log.Println("resolve song failed:", err)
+			http.Error(w, "could not resolve song", http.StatusBadGateway)
+			return
+		}
+
+		song := queue.Add(result.Title, result.Artist, result.VideoID, "admin")
+		hub.Broadcast(queue)
+		if !player.GetStatus().IsPlaying {
+			player.Play(song)
+		}
+		log.Printf("➕ Admin added: %s - %s", song.Title, song.Artist)
+		json.NewEncoder(w).Encode(song)
 	})
 
 	// POST /api/admin/queue/{id}/remove - remove one song from anywhere in

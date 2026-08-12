@@ -42,7 +42,7 @@ let currentUsername = null;
 const processedComments = new Set();
 const MAX_COMMENT_CACHE = 500;
 
-async function forwardComment(uniqueId, comment) {
+async function forwardComment(uniqueId, comment, msgId) {
   try {
     const headers = { 'Content-Type': 'application/json' };
     if (backendSecret) {
@@ -51,7 +51,12 @@ async function forwardComment(uniqueId, comment) {
     const res = await fetch(backendUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ username: uniqueId, comment }),
+      // msgId lets the backend dedup centrally — important because a
+      // rolling deploy can briefly run two connector instances at once,
+      // both forwarding the same live comment; this process's own
+      // in-memory processedComments Set can't catch a duplicate sent by
+      // the *other* instance, but the single backend instance can.
+      body: JSON.stringify({ username: uniqueId, comment, msgId }),
     });
     if (!res.ok && res.status !== 204) {
       const text = await res.text().catch(() => '');
@@ -74,8 +79,9 @@ function onChat(data) {
     return;
   }
 
-  // 2. Filter duplicate — msgId is TikTok's own per-message identifier,
-  // the reliable way to dedup.
+  // 2. Filter duplicate within *this* process — cheap early-exit for the
+  // common case, but not sufficient on its own: see forwardComment's
+  // comment on why the backend also dedups by msgId.
   const commentId = data.common?.msgId;
   if (commentId && processedComments.has(commentId)) {
     console.log(`⏭️ Skipping duplicate: ${commentId}`);
@@ -94,7 +100,7 @@ function onChat(data) {
   const comment = data.content || '';
 
   console.log(`💬 [${uniqueId}]: ${comment}`);
-  forwardComment(uniqueId, comment);
+  forwardComment(uniqueId, comment, commentId);
 }
 
 function connectTo(username) {

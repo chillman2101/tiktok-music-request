@@ -157,7 +157,15 @@
 
   <div class="card">
     <h2 style="margin-top:0">Sedang diputar & antrian</h2>
-    <div id="nowPlaying"><div class="empty">Memuat...</div></div>
+
+    <label for="addQuery">Tambah lagu manual (judul / artis)</label>
+    <div style="display:flex; gap:8px; margin-top:4px;">
+      <input type="text" id="addQuery" placeholder="Payung Teduh - Akad" style="flex:1;" />
+      <button id="addBtn" style="margin:0; white-space:nowrap;">➕ Tambah</button>
+    </div>
+    <div class="status" id="addStatus"></div>
+
+    <div id="nowPlaying" style="margin-top:14px;"><div class="empty">Memuat...</div></div>
     <div class="queue-actions">
       <button id="skipBtn" class="secondary">⏭ Skip</button>
       <button id="clearBtn" class="reject">🗑 Clear semua</button>
@@ -250,6 +258,35 @@
     // === Now playing + queue ===
     const nowPlayingEl = document.getElementById('nowPlaying');
     const queueListEl = document.getElementById('queueList');
+    const addQueryInput = document.getElementById('addQuery');
+    const addStatus = document.getElementById('addStatus');
+
+    async function addSong() {
+      const query = addQueryInput.value.trim();
+      if (!query) return;
+      addStatus.textContent = 'Mencari...';
+      addStatus.style.color = '#999';
+      const res = await fetch(`/api/admin/add${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      if (res.ok) {
+        const song = await res.json();
+        addStatus.textContent = `✅ Ditambahkan: ${song.title} — ${song.artist}`;
+        addStatus.style.color = '#4caf50';
+        addQueryInput.value = '';
+        loadQueue();
+      } else {
+        addStatus.textContent = '❌ Lagu nggak ketemu / gagal ditambahkan';
+        addStatus.style.color = '#f55';
+      }
+    }
+
+    document.getElementById('addBtn').addEventListener('click', addSong);
+    addQueryInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addSong();
+    });
 
     async function loadQueue() {
       if (queuePollSuspended) return;
