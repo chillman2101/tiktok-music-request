@@ -60,6 +60,56 @@ func (q *Queue) Clear() {
 	q.items = []Song{}
 }
 
+// Remove deletes the song with the given ID from anywhere in the queue
+// (not just the front, unlike Skip) and reports whether it was found.
+func (q *Queue) Remove(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, s := range q.items {
+		if s.ID == id {
+			q.items = append(q.items[:i], q.items[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ReorderUpcoming reorders every song after the currently playing one
+// (items[0]) to match the given ID order — used for drag-to-reorder in
+// the admin CMS, which never lets you drag the currently playing song.
+// ids must contain exactly the same set of IDs already in items[1:], in
+// any order; otherwise the queue is left unchanged and false is returned.
+func (q *Queue) ReorderUpcoming(ids []string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.items) == 0 {
+		return len(ids) == 0
+	}
+
+	upcoming := q.items[1:]
+	if len(ids) != len(upcoming) {
+		return false
+	}
+
+	byID := make(map[string]Song, len(upcoming))
+	for _, s := range upcoming {
+		byID[s.ID] = s
+	}
+
+	reordered := make([]Song, 0, len(ids))
+	for _, id := range ids {
+		s, ok := byID[id]
+		if !ok {
+			return false
+		}
+		reordered = append(reordered, s)
+	}
+
+	q.items = append(q.items[:1], reordered...)
+	return true
+}
+
 // Snapshot returns a copy of the current queue state.
 func (q *Queue) Snapshot() []Song {
 	q.mu.Lock()

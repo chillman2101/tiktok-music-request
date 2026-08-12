@@ -227,6 +227,118 @@ func main() {
 		hub.ServeWS(w, r, queue)
 	})
 
+	// GET /api/admin/queue - current + upcoming songs, for the admin CMS
+	// (separate from /api/queue so the overlay's read doesn't need
+	// adminToken and the admin panel's doesn't need overlayToken).
+	mux.HandleFunc("/api/admin/queue", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"queue":  queue.Snapshot(),
+			"status": player.GetStatus(),
+		})
+	})
+
+	// POST /api/admin/skip - skip the currently playing song
+	mux.HandleFunc("/api/admin/skip", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		player.Stop()
+		queue.Skip()
+		hub.Broadcast(queue)
+		next := queue.Peek()
+		if next != nil {
+			player.Play(*next)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// POST /api/admin/clear - empty the whole queue and stop playback
+	mux.HandleFunc("/api/admin/clear", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		player.Stop()
+		queue.Clear()
+		hub.Broadcast(queue)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// POST /api/admin/queue/{id}/remove - remove one song from anywhere in
+	// the queue. If it was the currently playing song, advances to next.
+	mux.HandleFunc("/api/admin/queue/", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/api/admin/queue/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[1] != "remove" {
+			http.Error(w, "expected /api/admin/queue/{id}/remove", http.StatusBadRequest)
+			return
+		}
+		id := parts[0]
+
+		wasCurrent := player.GetStatus().CurrentSong != nil && player.GetStatus().CurrentSong.ID == id
+		if !queue.Remove(id) {
+			http.Error(w, "song not found in queue", http.StatusNotFound)
+			return
+		}
+		hub.Broadcast(queue)
+
+		if wasCurrent {
+			player.Stop()
+			next := queue.Peek()
+			if next != nil {
+				player.Play(*next)
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// POST /api/admin/queue/reorder - drag-to-reorder the upcoming songs
+	// (everything after the one currently playing) in the admin CMS.
+	mux.HandleFunc("/api/admin/queue/reorder", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, adminToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid json body", http.StatusBadRequest)
+			return
+		}
+		if !queue.ReorderUpcoming(body.IDs) {
+			http.Error(w, "ids must match the current upcoming queue exactly", http.StatusBadRequest)
+			return
+		}
+		hub.Broadcast(queue)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// GET/POST /api/config - read/update broadcaster username, tiktok
 	// username, and auto-approve, from the admin CMS. GET is also used
 	// by the tiktok-connector sidecar to poll for a changed username.

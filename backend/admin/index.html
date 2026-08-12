@@ -76,6 +76,42 @@
   .pending-item .actions { display: flex; gap: 6px; flex-shrink: 0; }
   .pending-item .actions button { margin: 0; padding: 6px 12px; }
   .empty { font-size: 13px; color: #888; font-style: italic; }
+  .now-playing-card {
+    background: #0d0d0d;
+    border-left: 3px solid #ff2d55;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .now-playing-card .title { font-size: 14px; font-weight: 600; }
+  .now-playing-card .meta { font-size: 12px; color: #999; }
+  .queue-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+  .queue-actions button { margin: 0; padding: 7px 14px; }
+  .queue-item {
+    background: #0d0d0d;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: grab;
+    border: 1px solid transparent;
+  }
+  .queue-item .handle { color: #555; font-size: 14px; margin-right: 6px; cursor: grab; }
+  .queue-item .pos { color: #666; font-size: 12px; margin-right: 6px; }
+  .queue-item .title { font-size: 13px; font-weight: 600; }
+  .queue-item .meta { font-size: 11px; color: #999; }
+  .queue-item button {
+    margin: 0; padding: 5px 10px; background: #444; font-size: 12px;
+  }
+  .queue-item.dragging { opacity: 0.4; }
+  .queue-item.drag-over { border-color: #ff2d55; }
   /* Simple toggle switch */
   .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
   .switch input { opacity: 0; width: 0; height: 0; }
@@ -117,6 +153,16 @@
   <div class="card">
     <h2 style="margin-top:0">Menunggu approval</h2>
     <div id="pendingList"><div class="empty">Memuat...</div></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Sedang diputar & antrian</h2>
+    <div id="nowPlaying"><div class="empty">Memuat...</div></div>
+    <div class="queue-actions">
+      <button id="skipBtn" class="secondary">⏭ Skip</button>
+      <button id="clearBtn" class="reject">🗑 Clear semua</button>
+    </div>
+    <div id="queueList"></div>
   </div>
 
   <script>
@@ -201,9 +247,123 @@
       loadPending();
     });
 
+    // === Now playing + queue ===
+    const nowPlayingEl = document.getElementById('nowPlaying');
+    const queueListEl = document.getElementById('queueList');
+
+    async function loadQueue() {
+      if (queuePollSuspended) return;
+      const res = await fetch(`/api/admin/queue${qs}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const status = data.status || {};
+      const items = data.queue || [];
+
+      if (status.isPlaying && status.currentSong) {
+        const s = status.currentSong;
+        nowPlayingEl.innerHTML = `
+          <div class="now-playing-card">
+            <div>
+              <div class="title">🎵 ${escapeHtml(s.title)} — ${escapeHtml(s.artist)}</div>
+              <div class="meta">diminta oleh @${escapeHtml(s.requestedBy)}</div>
+            </div>
+          </div>
+        `;
+      } else {
+        nowPlayingEl.innerHTML = '<div class="empty">Nggak ada yang lagi diputar</div>';
+      }
+
+      // items[0] is the currently playing song (same one shown above) —
+      // skip it here so the list below only shows what's queued next.
+      const upNext = status.isPlaying ? items.slice(1) : items;
+      if (upNext.length === 0) {
+        queueListEl.innerHTML = '<div class="empty">Antrian kosong</div>';
+        return;
+      }
+      queueListEl.innerHTML = upNext.map((s, i) => `
+        <div class="queue-item" draggable="true" data-id="${escapeHtml(s.id)}">
+          <div>
+            <span class="handle">⠿</span>
+            <span class="pos">#${i + 1}</span>
+            <span class="title">${escapeHtml(s.title)} — ${escapeHtml(s.artist)}</span>
+            <div class="meta">@${escapeHtml(s.requestedBy)}</div>
+          </div>
+          <button data-remove-id="${escapeHtml(s.id)}">✖ Hapus</button>
+        </div>
+      `).join('');
+    }
+
+    // === Drag-to-reorder (native HTML5 drag & drop) ===
+    let draggedEl = null;
+    let queuePollSuspended = false;
+
+    queueListEl.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.queue-item');
+      if (!item) return;
+      draggedEl = item;
+      queuePollSuspended = true;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    queueListEl.addEventListener('dragend', () => {
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      queueListEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      draggedEl = null;
+      queuePollSuspended = false;
+    });
+
+    queueListEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const target = e.target.closest('.queue-item');
+      if (!target || target === draggedEl) return;
+      queueListEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      target.classList.add('drag-over');
+    });
+
+    queueListEl.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const target = e.target.closest('.queue-item');
+      target?.classList.remove('drag-over');
+      if (!target || !draggedEl || target === draggedEl) return;
+
+      const rect = target.getBoundingClientRect();
+      const insertAfter = (e.clientY - rect.top) > rect.height / 2;
+      target.insertAdjacentElement(insertAfter ? 'afterend' : 'beforebegin', draggedEl);
+
+      const ids = [...queueListEl.querySelectorAll('.queue-item')].map(el => el.dataset.id);
+      await fetch(`/api/admin/queue/reorder${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      loadQueue();
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', async () => {
+      await fetch(`/api/admin/skip${qs}`, { method: 'POST' });
+      loadQueue();
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', async () => {
+      if (!confirm('Hapus semua antrian dan stop lagu yang lagi diputar?')) return;
+      await fetch(`/api/admin/clear${qs}`, { method: 'POST' });
+      loadQueue();
+    });
+
+    queueListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-remove-id]');
+      if (!btn) return;
+      btn.disabled = true;
+      await fetch(`/api/admin/queue/${encodeURIComponent(btn.dataset.removeId)}/remove${qs}`, { method: 'POST' });
+      loadQueue();
+    });
+
     loadConfig();
     loadPending();
+    loadQueue();
     setInterval(loadPending, 3000);
+    setInterval(loadQueue, 3000);
   </script>
 </body>
 </html>
