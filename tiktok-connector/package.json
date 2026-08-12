@@ -1,0 +1,13 @@
+{
+  "name": "tiktok-connector",
+  "version": "1.0.0",
+  "description": "Forwards real TikTok Live chat comments to the song-request backend's /api/comment endpoint.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "tiktok-live-connector": "^1.2.6"
+  }
+}

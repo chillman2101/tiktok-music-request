@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<title>Song Request Overlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: transparent;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+  #panel {
+    position: fixed;
+    bottom: 24px;
+    left: 24px;
+    width: 380px;
+  }
+  .now-playing {
+    background: linear-gradient(135deg, rgba(30, 30, 30, 0.85), rgba(20, 20, 20, 0.85));
+    border-left: 4px solid #ff2d55;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    animation: slideIn 0.4s ease;
+  }
+  .now-playing .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .now-playing .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #ff2d55;
+    font-weight: 700;
+  }
+  .now-playing .requester-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 45, 85, 0.15);
+    border: 1px solid rgba(255, 45, 85, 0.4);
+    border-radius: 999px;
+    padding: 3px 10px 3px 6px;
+  }
+  .now-playing .requester-badge .avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ff2d55;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .now-playing .requester-badge .name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .now-playing .title {
+    font-size: 19px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .now-playing .artist {
+    font-size: 13px;
+    color: #ccc;
+  }
+  .queue-item {
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 6px;
+    padding: 7px 12px;
+    margin-bottom: 4px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    animation: slideIn 0.3s ease;
+  }
+  .queue-item .song-info { display: flex; align-items: center; min-width: 0; }
+  .queue-item .pos { color: #888; margin-right: 8px; flex-shrink: 0; }
+  .queue-item .song-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-item .requester {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(255, 45, 85, 0.18);
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-left: 8px;
+    flex-shrink: 0;
+  }
+  .empty {
+    font-size: 13px;
+    color: #999;
+    font-style: italic;
+  }
+  /* YouTube iframe is the actual audio source — kept tiny/offscreen since
+     only the panel above is meant to be seen, but it must stay in the
+     DOM (not display:none) or some browsers suspend its audio. */
+  #player-mount {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    width: 2px;
+    height: 2px;
+    overflow: hidden;
+    opacity: 0.01;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-12px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+</style>
+</head>
+<body>
+  <div id="panel">
+    <div id="content"><div class="empty">Belum ada request lagu...</div></div>
+  </div>
+  <div id="player-mount"></div>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script>
+    const content = document.getElementById('content');
+    let ytPlayer = null;
+    let ytReady = false;
+    let currentVideoId = null;
+
+    // Loaded by the YouTube IFrame API script once it's ready.
+    window.onYouTubeIframeAPIReady = () => {
+      ytPlayer = new YT.Player('player-mount', {
+        width: '2',
+        height: '2',
+        playerVars: { autoplay: 1, controls: 0, disablekb: 1 },
+        events: {
+          onReady: () => { ytReady = true; },
+          onStateChange: (e) => {
+            if (e.data === YT.PlayerState.ENDED) {
+              fetch('/api/advance', { method: 'POST' }).catch(() => {});
+            }
+          },
+        },
+      });
+    };
+
+    function syncPlayer(current) {
+      if (!ytReady || !current || !current.videoId) return;
+      if (current.videoId === currentVideoId) return;
+      currentVideoId = current.videoId;
+      ytPlayer.loadVideoById(current.videoId);
+    }
+
+    function render(queue) {
+      if (!queue || queue.length === 0) {
+        content.innerHTML = '<div class="empty">Belum ada request lagu... ketik !play judul lagu</div>';
+        if (ytReady && currentVideoId) {
+          ytPlayer.stopVideo();
+          currentVideoId = null;
+        }
+        return;
+      }
+
+      const [current, ...upNext] = queue;
+      syncPlayer(current);
+      const currentRequester = current.requestedBy || '';
+      let html = `
+        <div class="now-playing">
+          <div class="top-row">
+            <div class="label">Now Playing</div>
+            ${currentRequester ? `
+              <div class="requester-badge">
+                <span class="avatar">${escapeHtml(currentRequester.charAt(0).toUpperCase())}</span>
+                <span class="name">@${escapeHtml(currentRequester)}</span>
+              </div>
+            ` : ''}
+          </div>
+          <div class="title">${escapeHtml(current.title)}</div>
+          <div class="artist">${escapeHtml(current.artist)}</div>
+        </div>
+      `;
+
+      upNext.slice(0, 5).forEach((song, i) => {
+        html += `
+          <div class="queue-item">
+            <span class="song-info"><span class="pos">#${i + 1}</span><span class="song-text">${escapeHtml(song.title)} — ${escapeHtml(song.artist)}</span></span>
+            <span class="requester">👤 @${escapeHtml(song.requestedBy)}</span>
+          </div>
+        `;
+      });
+
+      content.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
+
+    function connect() {
+      // Same host/port that served this page.
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        render(data.queue);
+      };
+      ws.onclose = () => {
+        // Auto-reconnect after a short delay if OBS/browser drops the connection.
+        setTimeout(connect, 2000);
+      };
+    }
+
+    connect();
+  </script>
+</body>
+</html>
