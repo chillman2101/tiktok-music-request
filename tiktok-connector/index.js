@@ -13,7 +13,9 @@
 //   TIKTOK_USERNAME=your_tiktok_handle node index.js
 //
 // Env vars:
-//   TIKTOK_USERNAME       required — TikTok handle to watch (without @), must be live
+//   TIKTOK_USERNAME       required — initial TikTok handle to watch (without @), must be live.
+//                          Can be changed later from the admin CMS (/admin/) without restarting
+//                          this process — it polls /api/config and reconnects on change.
 //   BACKEND_URL           optional — where to POST comments, defaults to http://localhost:8080/api/comment
 //   BACKEND_SHARED_SECRET optional — must match the backend's BACKEND_SHARED_SECRET env var;
 //                          required once the backend is publicly reachable, otherwise
@@ -21,31 +23,24 @@
 
 const { TikTokLiveConnection, WebcastEvent } = require('tiktok-live-connector');
 
-const username = process.env.TIKTOK_USERNAME;
-if (!username) {
+const initialUsername = process.env.TIKTOK_USERNAME;
+if (!initialUsername) {
   console.error('Missing TIKTOK_USERNAME env var. Usage: TIKTOK_USERNAME=your_handle node index.js');
   process.exit(1);
 }
 
 const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080/api/comment';
+const backendBase = backendUrl.replace(/\/api\/comment\/?$/, '');
+const configUrl = `${backendBase}/api/config`;
 const backendSecret = process.env.BACKEND_SHARED_SECRET || '';
 if (!backendSecret) {
   console.warn('WARNING: BACKEND_SHARED_SECRET not set — requests to the backend are unauthenticated.');
 }
 
-// Pass an explicit options object — some internal defaults in this
-// library version destructure the second argument without defaulting
-// it to {} themselves, so omitting it throws "Cannot read properties
-// of undefined (reading 'processInitialData')".
-//
-// processInitialData: false is the important one here — by default the
-// library replays a batch of *recent chat history* as CHAT events right
-// after connecting. Every deploy/restart reconnects from scratch, so
-// without this, every redeploy re-fires old "!play" comments from
-// whatever was said in the last minute or so before the restart.
-const connection = new TikTokLiveConnection(username, {
-  processInitialData: false,
-});
+let connection = null;
+let currentUsername = null;
+const processedComments = new Set();
+const MAX_COMMENT_CACHE = 500;
 
 async function forwardComment(uniqueId, comment) {
   try {
@@ -67,21 +62,7 @@ async function forwardComment(uniqueId, comment) {
   }
 }
 
-connection.connect()
-  .then((state) => {
-    console.log(`Connected to @${username}'s live room (roomId ${state.roomId}). Forwarding comments to ${backendUrl}`);
-  })
-  .catch((err) => {
-    console.error('Failed to connect to TikTok Live. Is the account currently live?', err);
-    process.exit(1);
-  });
-
-// === FILTER OLD COMMENTS ===
-let connectionStartTime = Date.now();
-const processedComments = new Set();
-const MAX_COMMENT_CACHE = 500;
-
-connection.on(WebcastEvent.CHAT, (data) => {
+function onChat(data) {
   // 1. Filter berdasarkan timestamp. data.common.createTime is a proto
   // string, in seconds since epoch.
   const commentTime = Number(data.common?.createTime || 0);
@@ -94,10 +75,7 @@ connection.on(WebcastEvent.CHAT, (data) => {
   }
 
   // 2. Filter duplicate — msgId is TikTok's own per-message identifier,
-  // the reliable way to dedup (previously fell back to a "username_content"
-  // string built from a field that doesn't exist on this message type,
-  // which meant e.g. every "!skip" from anyone, ever, collided as the
-  // same "duplicate" and got silently dropped after the first one).
+  // the reliable way to dedup.
   const commentId = data.common?.msgId;
   if (commentId && processedComments.has(commentId)) {
     console.log(`⏭️ Skipping duplicate: ${commentId}`);
@@ -117,13 +95,67 @@ connection.on(WebcastEvent.CHAT, (data) => {
 
   console.log(`💬 [${uniqueId}]: ${comment}`);
   forwardComment(uniqueId, comment);
-});
+}
 
-connection.on(WebcastEvent.DISCONNECTED, () => {
-  console.warn('Disconnected from TikTok Live room. Retrying in 5s...');
-  setTimeout(() => connection.connect().catch((err) => console.error('reconnect failed:', err.message)), 5000);
-});
+function connectTo(username) {
+  if (connection) {
+    connection.disconnect().catch(() => {});
+  }
 
-connection.on(WebcastEvent.ERROR, (err) => {
-  console.error('connector error:', err);
-});
+  currentUsername = username;
+  connection = new TikTokLiveConnection(username, {
+    // By default the library replays a batch of recent chat history as
+    // CHAT events right after connecting. Every deploy/restart (or a
+    // username change from the CMS) reconnects from scratch, so without
+    // this, every reconnect would re-fire old "!play" comments.
+    processInitialData: false,
+  });
+
+  connection.connect()
+    .then((state) => {
+      console.log(`Connected to @${username}'s live room (roomId ${state.roomId}). Forwarding comments to ${backendUrl}`);
+    })
+    .catch((err) => {
+      console.error(`Failed to connect to @${username}'s live room. Is the account currently live?`, err.message);
+    });
+
+  connection.on(WebcastEvent.CHAT, onChat);
+
+  connection.on(WebcastEvent.DISCONNECTED, () => {
+    console.warn('Disconnected from TikTok Live room. Retrying in 5s...');
+    setTimeout(() => {
+      if (currentUsername === username) {
+        connection.connect().catch((err) => console.error('reconnect failed:', err.message));
+      }
+    }, 5000);
+  });
+
+  connection.on(WebcastEvent.ERROR, (err) => {
+    console.error('connector error:', err);
+  });
+}
+
+// Poll the backend for a changed TikTok username set from the admin CMS,
+// and reconnect to the new room if it differs from the one we're watching.
+// The admin CMS is the source of truth once it's been saved at least once;
+// until then we keep using TIKTOK_USERNAME from the env.
+async function pollConfig() {
+  try {
+    const headers = {};
+    if (backendSecret) {
+      headers['Authorization'] = `Bearer ${backendSecret}`;
+    }
+    const res = await fetch(configUrl, { headers });
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (cfg.tiktokUsername && cfg.tiktokUsername !== currentUsername) {
+      console.log(`🔄 TikTok username changed via CMS: ${currentUsername} -> ${cfg.tiktokUsername}`);
+      connectTo(cfg.tiktokUsername);
+    }
+  } catch (err) {
+    console.warn('failed to poll /api/config:', err.message);
+  }
+}
+
+connectTo(initialUsername);
+setInterval(pollConfig, 30000);

@@ -3,3 +3,5 @@ node_modules/
 __pycache__/
 *.pyc
 .env
+backend/config.json
+backend/streams/

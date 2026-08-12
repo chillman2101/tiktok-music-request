@@ -61,9 +61,9 @@ sebagai **Browser Source** di OBS (token-nya harus sama persis dengan
 **"Control audio via OBS"** — tanpa ini, sebagian besar browser (termasuk
 yang dipakai OBS) memblokir autoplay audio dan lagu nggak akan bunyi.
 
-### Soal keamanan (`BACKEND_SHARED_SECRET` & `OVERLAY_TOKEN`)
+### Soal keamanan (`BACKEND_SHARED_SECRET`, `OVERLAY_TOKEN`, `ADMIN_TOKEN`)
 
-Dua env var ini **opsional tapi sangat disarankan begitu backend bisa
+Tiga env var ini **opsional tapi sangat disarankan begitu backend bisa
 diakses dari internet** (misal habis deploy ke Railway):
 
 - **`BACKEND_SHARED_SECRET`** — dicek di `/api/comment` lewat header
@@ -74,11 +74,32 @@ diakses dari internet** (misal habis deploy ke Railway):
 - **`OVERLAY_TOKEN`** — dicek di `/overlay/`, `/ws`, `/api/queue`, dan
   `/api/advance` lewat query param `?key=...`. Tanpa ini, URL overlay
   publik bisa dibuka siapa aja yang tau linknya.
+- **`ADMIN_TOKEN`** — dicek di `/admin/` (CMS) dan `/api/config`,
+  `/api/pending` lewat query param `?key=...`. Ini yang paling sensitif —
+  siapapun yang punya token ini bisa ganti broadcaster username dan
+  approve/reject request, jadi jangan dipakai bareng token lain.
 
 Kalau env var-nya nggak diisi, backend tetap jalan (buat kemudahan testing
 lokal) tapi bakal nge-log warning di startup bahwa endpoint itu terbuka.
-Isi keduanya dengan string acak yang panjang (misal `openssl rand -hex 32`),
-bukan kata yang gampang ditebak.
+Isi ketiganya dengan string acak yang panjang dan berbeda-beda (misal
+`openssl rand -hex 32`), bukan kata yang gampang ditebak.
+
+### CMS Admin (`/admin/`)
+
+Buka `http://localhost:8080/admin/?key=<ADMIN_TOKEN>` (atau versi Railway-nya)
+buat:
+
+- **Ganti broadcaster username & TikTok username yang di-watch** tanpa perlu
+  redeploy — `tiktok-connector` polling `/api/config` tiap 30 detik dan
+  otomatis reconnect ke room baru kalau `TikTokUsername`-nya berubah.
+- **Toggle auto-approve**: kalau nyala (default), `!play` langsung masuk
+  antrian seperti biasa. Kalau dimatikan, tiap `!play` masuk ke daftar
+  "menunggu approval" dulu — kamu approve/tolak manual lewat CMS sebelum
+  masuk queue beneran (dan sebelum kelihatan di overlay).
+
+Setting-an ini disimpan di `backend/config.json` (persist antar restart
+proses, tapi nggak persist lintas redeploy Railway kecuali dipasangin
+volume — sama kayak keterbatasan in-memory queue).
 
 ### Deploy ke Railway (3 service dari repo yang sama)
 
@@ -91,14 +112,19 @@ Buat 3 service, masing-masing dengan **root directory** yang beda:
 | tiktok-connector | `tiktok-connector` | Tidak — outbound only, gak perlu port |
 
 Env vars:
-- **backend**: `BROADCASTER_USERNAME`, `BACKEND_SHARED_SECRET`, `OVERLAY_TOKEN`,
-  dan `MUSIC_SEARCH_URL=http://music-search.railway.internal:${{music-search.PORT}}/search`
+- **backend**: `BROADCASTER_USERNAME`, `TIKTOK_USERNAME` (default awal, bisa
+  diganti belakangan lewat CMS), `BACKEND_SHARED_SECRET`, `OVERLAY_TOKEN`,
+  `ADMIN_TOKEN`, dan
+  `MUSIC_SEARCH_URL=http://music-search.railway.internal:${{music-search.PORT}}/search`
   (pakai referensi variabel Railway biar port-nya otomatis sinkron)
 - **tiktok-connector**: `TIKTOK_USERNAME`, `BACKEND_SHARED_SECRET` (samain
   dengan punya backend), `BACKEND_URL=https://<backend-service>.up.railway.app/api/comment`
 
 Overlay URL buat OBS jadi:
 `https://<backend-service>.up.railway.app/overlay/?key=<OVERLAY_TOKEN>`
+
+CMS URL buat kamu sendiri:
+`https://<backend-service>.up.railway.app/admin/?key=<ADMIN_TOKEN>`
 
 ⚠️ `tiktok-live-connector` itu unofficial (reverse-engineered), bisa putus
 kalau TikTok ubah protokol internal mereka — kalau connect gagal, coba

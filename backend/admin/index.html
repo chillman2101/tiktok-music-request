@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<title>Song Request Admin</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #111;
+    color: #eee;
+    padding: 24px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 24px 0 10px; color: #ff2d55; }
+  .card {
+    background: #1b1b1b;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 4px;
+    margin-top: 12px;
+  }
+  label:first-child { margin-top: 0; }
+  input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #0d0d0d;
+    color: #eee;
+    font-size: 14px;
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+  }
+  .toggle-row span { font-size: 13px; }
+  button {
+    background: #ff2d55;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 16px;
+  }
+  button:hover { opacity: 0.9; }
+  button.secondary { background: #333; }
+  button.reject { background: #444; }
+  .status { font-size: 12px; color: #4caf50; margin-top: 8px; min-height: 16px; }
+  .pending-item {
+    background: #0d0d0d;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .pending-item .info { min-width: 0; }
+  .pending-item .title { font-size: 14px; font-weight: 600; }
+  .pending-item .meta { font-size: 12px; color: #999; }
+  .pending-item .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .pending-item .actions button { margin: 0; padding: 6px 12px; }
+  .empty { font-size: 13px; color: #888; font-style: italic; }
+  /* Simple toggle switch */
+  .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #333; border-radius: 22px; transition: 0.2s;
+  }
+  .slider::before {
+    position: absolute; content: ""; height: 16px; width: 16px;
+    left: 3px; bottom: 3px; background: #eee; border-radius: 50%; transition: 0.2s;
+  }
+  input:checked + .slider { background: #ff2d55; }
+  input:checked + .slider::before { transform: translateX(18px); }
+</style>
+</head>
+<body>
+  <h1>🎛️ Song Request Admin</h1>
+
+  <div class="card">
+    <h2 style="margin-top:0">Pengaturan</h2>
+    <label for="broadcaster">Broadcaster username (TikTok, buat izin !skip/!clearqueue)</label>
+    <input type="text" id="broadcaster" placeholder="nama_tiktok_kamu" />
+
+    <label for="tiktok">TikTok username yang di-watch live-nya</label>
+    <input type="text" id="tiktok" placeholder="nama_tiktok_kamu" />
+
+    <div class="toggle-row">
+      <span>Auto-approve request (!play langsung masuk queue)</span>
+      <label class="switch">
+        <input type="checkbox" id="autoApprove" />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <button id="save">Simpan</button>
+    <div class="status" id="saveStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Menunggu approval</h2>
+    <div id="pendingList"><div class="empty">Memuat...</div></div>
+  </div>
+
+  <script>
+    const authToken = new URLSearchParams(location.search).get('key') || '';
+    const qs = `?key=${encodeURIComponent(authToken)}`;
+
+    const broadcasterInput = document.getElementById('broadcaster');
+    const tiktokInput = document.getElementById('tiktok');
+    const autoApproveInput = document.getElementById('autoApprove');
+    const saveStatus = document.getElementById('saveStatus');
+    const pendingList = document.getElementById('pendingList');
+
+    async function loadConfig() {
+      const res = await fetch(`/api/config${qs}`);
+      if (!res.ok) {
+        saveStatus.textContent = 'Gagal load config (token salah?)';
+        saveStatus.style.color = '#f55';
+        return;
+      }
+      const cfg = await res.json();
+      broadcasterInput.value = cfg.broadcasterUsername || '';
+      tiktokInput.value = cfg.tiktokUsername || '';
+      autoApproveInput.checked = !!cfg.autoApprove;
+    }
+
+    document.getElementById('save').addEventListener('click', async () => {
+      saveStatus.textContent = 'Menyimpan...';
+      saveStatus.style.color = '#999';
+      const res = await fetch(`/api/config${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          broadcasterUsername: broadcasterInput.value.trim(),
+          tiktokUsername: tiktokInput.value.trim(),
+          autoApprove: autoApproveInput.checked,
+        }),
+      });
+      if (res.ok) {
+        saveStatus.textContent = '✅ Tersimpan';
+        saveStatus.style.color = '#4caf50';
+      } else {
+        saveStatus.textContent = '❌ Gagal simpan';
+        saveStatus.style.color = '#f55';
+      }
+    });
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
+
+    async function loadPending() {
+      const res = await fetch(`/api/pending${qs}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = data.pending || [];
+      if (items.length === 0) {
+        pendingList.innerHTML = '<div class="empty">Nggak ada yang nunggu approval</div>';
+        return;
+      }
+      pendingList.innerHTML = items.map(s => `
+        <div class="pending-item">
+          <div class="info">
+            <div class="title">${escapeHtml(s.title)} — ${escapeHtml(s.artist)}</div>
+            <div class="meta">diminta oleh @${escapeHtml(s.requestedBy)}</div>
+          </div>
+          <div class="actions">
+            <button data-action="approve" data-id="${escapeHtml(s.id)}">✅ Approve</button>
+            <button class="reject" data-action="reject" data-id="${escapeHtml(s.id)}">✖ Tolak</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    pendingList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const { action, id } = btn.dataset;
+      btn.disabled = true;
+      await fetch(`/api/pending/${encodeURIComponent(id)}/${action}${qs}`, { method: 'POST' });
+      loadPending();
+    });
+
+    loadConfig();
+    loadPending();
+    setInterval(loadPending, 3000);
+  </script>
+</body>
+</html>
