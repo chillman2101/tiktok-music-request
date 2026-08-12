@@ -82,8 +82,9 @@ const processedComments = new Set();
 const MAX_COMMENT_CACHE = 500;
 
 connection.on(WebcastEvent.CHAT, (data) => {
-  // 1. Filter berdasarkan timestamp
-  const commentTime = data.createTime || data.common?.createTime || 0;
+  // 1. Filter berdasarkan timestamp. data.common.createTime is a proto
+  // string, in seconds since epoch.
+  const commentTime = Number(data.common?.createTime || 0);
   const diff = (Date.now() - commentTime * 1000) / 1000;
 
   // Abaikan comment yang lebih dari 10 detik yang lalu
@@ -92,22 +93,27 @@ connection.on(WebcastEvent.CHAT, (data) => {
     return;
   }
 
-  // 2. Filter duplicate (by comment ID)
-  const commentId = data.id || data.commentId || `${data.common?.displayId}_${data.content}`;
-  if (processedComments.has(commentId)) {
+  // 2. Filter duplicate — msgId is TikTok's own per-message identifier,
+  // the reliable way to dedup (previously fell back to a "username_content"
+  // string built from a field that doesn't exist on this message type,
+  // which meant e.g. every "!skip" from anyone, ever, collided as the
+  // same "duplicate" and got silently dropped after the first one).
+  const commentId = data.common?.msgId;
+  if (commentId && processedComments.has(commentId)) {
     console.log(`⏭️ Skipping duplicate: ${commentId}`);
     return;
   }
-
-  processedComments.add(commentId);
-  if (processedComments.size > MAX_COMMENT_CACHE) {
-    const first = processedComments.values().next().value;
-    processedComments.delete(first);
+  if (commentId) {
+    processedComments.add(commentId);
+    if (processedComments.size > MAX_COMMENT_CACHE) {
+      const first = processedComments.values().next().value;
+      processedComments.delete(first);
+    }
   }
 
-  // 3. Extract data
-  const uniqueId = data.common?.displayId || data.user?.displayId || 'unknown';
-  const comment = data.content || data.comment || '';
+  // 3. Extract data. displayId is the TikTok @handle (uniqueId).
+  const uniqueId = data.user?.displayId || data.user?.nickname || 'unknown';
+  const comment = data.content || '';
 
   console.log(`💬 [${uniqueId}]: ${comment}`);
   forwardComment(uniqueId, comment);
