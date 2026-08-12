@@ -16,7 +16,7 @@
 //   TIKTOK_USERNAME   required — TikTok handle to watch (without @), must be live
 //   BACKEND_URL       optional — where to POST comments, defaults to http://localhost:8080/api/comment
 
-const { WebcastPushConnection } = require('tiktok-live-connector');
+const { TikTokLiveConnection, WebcastEvent } = require('tiktok-live-connector');
 
 const username = process.env.TIKTOK_USERNAME;
 if (!username) {
@@ -26,7 +26,7 @@ if (!username) {
 
 const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080/api/comment';
 
-const connection = new WebcastPushConnection(username);
+const connection = new TikTokLiveConnection(username);
 
 async function forwardComment(uniqueId, comment) {
   try {
@@ -53,15 +53,15 @@ connection.connect()
     process.exit(1);
   });
 
-connection.on('chat', (data) => {
-  forwardComment(data.uniqueId, data.comment);
+connection.on(WebcastEvent.CHAT, (data) => {
+  forwardComment(data.user.uniqueId, data.comment);
 });
 
-connection.on('disconnected', () => {
+connection.on(WebcastEvent.DISCONNECTED, () => {
   console.warn('Disconnected from TikTok Live room. Retrying in 5s...');
   setTimeout(() => connection.connect().catch((err) => console.error('reconnect failed:', err.message)), 5000);
 });
 
-connection.on('error', (err) => {
+connection.on(WebcastEvent.ERROR, (err) => {
   console.error('connector error:', err);
 });
