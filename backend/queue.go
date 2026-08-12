@@ -68,3 +68,20 @@ func (q *Queue) Snapshot() []Song {
 	copy(out, q.items)
 	return out
 }
+
+// Len returns the number of songs in the queue.
+func (q *Queue) Len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items)
+}
+
+// Peek returns the first song without removing it.
+func (q *Queue) Peek() *Song {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) == 0 {
+		return nil
+	}
+	return &q.items[0]
+}

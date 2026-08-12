@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8" />
-<title>Song Request Overlay</title>
+<title>Song Request Overlay - Local Stream</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -73,6 +73,22 @@
     font-size: 13px;
     color: #ccc;
   }
+  .now-playing .status {
+    font-size: 11px;
+    color: #4caf50;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .now-playing .status .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: #4caf50;
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
   .queue-item {
     background: rgba(0, 0, 0, 0.5);
     border-radius: 6px;
@@ -109,21 +125,13 @@
     color: #999;
     font-style: italic;
   }
-  /* YouTube iframe is the actual audio source — kept tiny/offscreen since
-     only the panel above is meant to be seen, but it must stay in the
-     DOM (not display:none) or some browsers suspend its audio. */
-  #player-mount {
-    position: fixed;
-    bottom: 0;
-    right: 0;
-    width: 2px;
-    height: 2px;
-    overflow: hidden;
-    opacity: 0.01;
-  }
   @keyframes slideIn {
     from { opacity: 0; transform: translateX(-12px); }
     to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
   }
 </style>
 </head>
@@ -131,60 +139,35 @@
   <div id="panel">
     <div id="content"><div class="empty">Belum ada request lagu...</div></div>
   </div>
-  <div id="player-mount"></div>
 
-  <script src="https://www.youtube.com/iframe_api"></script>
   <script>
     const content = document.getElementById('content');
-    let ytPlayer = null;
-    let ytReady = false;
-    let currentVideoId = null;
+    let currentSong = null;
 
-    // Auth token passed in this page's own URL (?key=...), forwarded to
-    // the WebSocket and /api/advance so they pass the backend's check too.
+    // Auth token
     const authToken = new URLSearchParams(location.search).get('key') || '';
 
-    // Loaded by the YouTube IFrame API script once it's ready.
-    window.onYouTubeIframeAPIReady = () => {
-      ytPlayer = new YT.Player('player-mount', {
-        width: '2',
-        height: '2',
-        playerVars: { autoplay: 1, controls: 0, disablekb: 1 },
-        events: {
-          onReady: () => { ytReady = true; },
-          onStateChange: (e) => {
-            if (e.data === YT.PlayerState.ENDED) {
-              fetch(`/api/advance?key=${encodeURIComponent(authToken)}`, { method: 'POST' }).catch(() => {});
-            }
-          },
-        },
-      });
-    };
-
-    function syncPlayer(current) {
-      if (!ytReady || !current || !current.videoId) return;
-      if (current.videoId === currentVideoId) return;
-      currentVideoId = current.videoId;
-      ytPlayer.loadVideoById(current.videoId);
-    }
+    // Auto-advance timer (fallback if player doesn't send advance)
+    let advanceTimer = null;
 
     function render(queue) {
       if (!queue || queue.length === 0) {
         content.innerHTML = '<div class="empty">Belum ada request lagu... ketik !play judul lagu</div>';
-        if (ytReady && currentVideoId) {
-          ytPlayer.stopVideo();
-          currentVideoId = null;
+        if (advanceTimer) {
+          clearTimeout(advanceTimer);
+          advanceTimer = null;
         }
         return;
       }
 
       const [current, ...upNext] = queue;
-      syncPlayer(current);
+      currentSong = current;
+      
       const currentRequester = current.requestedBy || '';
       let html = `
         <div class="now-playing">
           <div class="top-row">
-            <div class="label">Now Playing</div>
+            <div class="label">🎵 Now Playing</div>
             ${currentRequester ? `
               <div class="requester-badge">
                 <span class="avatar">${escapeHtml(currentRequester.charAt(0).toUpperCase())}</span>
@@ -194,6 +177,10 @@
           </div>
           <div class="title">${escapeHtml(current.title)}</div>
           <div class="artist">${escapeHtml(current.artist)}</div>
+          <div class="status">
+            <span class="dot"></span>
+            Streaming via yt-dlp ➜ VLC/mpv
+          </div>
         </div>
       `;
 
@@ -207,6 +194,17 @@
       });
 
       content.innerHTML = html;
+
+      // Auto-advance timer (safety net)
+      // If player doesn't send advance after ~5 minutes, force skip
+      if (advanceTimer) {
+        clearTimeout(advanceTimer);
+      }
+      // Comment out or adjust as needed
+      // advanceTimer = setTimeout(() => {
+      //   fetch(`/api/advance?key=${encodeURIComponent(authToken)}`, { method: 'POST' })
+      //     .catch(() => {});
+      // }, 300000); // 5 minutes
     }
 
     function escapeHtml(str) {
@@ -216,16 +214,15 @@
     }
 
     function connect() {
-      // Same host/port that served this page. wss:// when the page itself
-      // is loaded over https (e.g. deployed on Railway), ws:// for local dev.
       const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${wsProtocol}//${location.host}/ws?key=${encodeURIComponent(authToken)}`);
+      
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         render(data.queue);
       };
+      
       ws.onclose = () => {
-        // Auto-reconnect after a short delay if OBS/browser drops the connection.
         setTimeout(connect, 2000);
       };
     }
