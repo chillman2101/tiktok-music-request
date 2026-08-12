@@ -70,8 +70,39 @@ connection.connect()
 
 // Yang asli pake WebcastEvent.CHAT
 connection.on(WebcastEvent.CHAT, (data) => {
-  console.log('📦 Full CHAT data:', JSON.stringify(data, null, 2)); // TAMBAHKAN INI
-  forwardComment(data.user.uniqueId, data.comment);
+  // === EXTRACT USERNAME ===
+  // Dari data di atas, username ada di:
+  // - data.common.displayId  (✅ "aditgusgianar")
+  // - data.user?.displayId   (alternatif)
+  // - data.uniqueId          (alternatif)
+
+  const uniqueId = data.common?.displayId ||
+    data.user?.displayId ||
+    data.uniqueId ||
+    data.userId ||
+    data.from?.userId ||
+    'unknown';
+
+  // === EXTRACT COMMENT ===
+  // Comment ada di:
+  // - data.comment
+  // - data.content
+  // - data.message
+
+  const comment = data.comment ||
+    data.content ||
+    data.message ||
+    data.text ||
+    '';
+
+  console.log(`💬 [${uniqueId}]: ${comment}`);
+
+  // Forward ke backend
+  if (uniqueId !== 'unknown' && comment) {
+    forwardComment(uniqueId, comment);
+  } else {
+    console.log('⚠️ Could not extract:', { uniqueId, comment });
+  }
 });
 
 connection.on(WebcastEvent.DISCONNECTED, () => {
