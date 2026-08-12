@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8" />
-<title>Song Request Overlay - Local Stream</title>
+<title>Song Request Overlay</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -89,6 +89,18 @@
     border-radius: 50%;
     animation: pulse 1.5s ease-in-out infinite;
   }
+  
+  #audio-player {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: -999;
+  }
+  
   .queue-item {
     background: rgba(0, 0, 0, 0.5);
     border-radius: 6px;
@@ -125,6 +137,7 @@
     color: #999;
     font-style: italic;
   }
+  
   @keyframes slideIn {
     from { opacity: 0; transform: translateX(-12px); }
     to { opacity: 1; transform: translateX(0); }
@@ -139,24 +152,104 @@
   <div id="panel">
     <div id="content"><div class="empty">Belum ada request lagu...</div></div>
   </div>
+  
+  <audio id="audio-player" preload="auto"></audio>
 
   <script>
     const content = document.getElementById('content');
+    const audioPlayer = document.getElementById('audio-player');
     let currentSong = null;
+    let isPlaying = false;
+    let audioContext = null;
 
     // Auth token
     const authToken = new URLSearchParams(location.search).get('key') || '';
 
-    // Auto-advance timer (fallback if player doesn't send advance)
-    let advanceTimer = null;
+    // === ULTIMATE AUTOPLAY FIX ===
+    function unlockAudio() {
+      // Method 1: Create silent AudioContext to unlock audio
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          // Create silent buffer and play it
+          const buffer = audioContext.createBuffer(1, 1, 22050);
+          const source = audioContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(audioContext.destination);
+          source.start(0);
+          console.log('✅ AudioContext unlocked');
+        }
+        if (audioContext && audioContext.state === 'suspended') {
+          audioContext.resume().then(() => {
+            console.log('✅ AudioContext resumed');
+          });
+        }
+      } catch (e) {
+        console.log('AudioContext error:', e);
+      }
+
+      // Method 2: Try to play audio element
+      if (audioPlayer.src && audioPlayer.paused) {
+        audioPlayer.muted = true;
+        audioPlayer.play().then(() => {
+          audioPlayer.muted = false;
+          isPlaying = true;
+          console.log('✅ Audio playing (unlocked)');
+        }).catch(() => {
+          // Method 3: Fallback - reload and try again
+          audioPlayer.load();
+          setTimeout(() => {
+            audioPlayer.muted = true;
+            audioPlayer.play().then(() => {
+              audioPlayer.muted = false;
+              isPlaying = true;
+              console.log('✅ Audio playing (reloaded)');
+            }).catch(() => {});
+          }, 500);
+        });
+      }
+    }
+
+    function playAudio(videoId) {
+      if (!videoId) return;
+      
+      const baseUrl = `${window.location.protocol}//${window.location.host}`;
+      const streamUrl = `${baseUrl}/api/stream?videoId=${videoId}&key=${encodeURIComponent(authToken)}`;
+      
+      // Set source
+      audioPlayer.src = streamUrl;
+      audioPlayer.load();
+      
+      // Unlock and play
+      setTimeout(() => {
+        unlockAudio();
+      }, 200);
+      
+      // Auto-advance when song ends
+      audioPlayer.onended = () => {
+        console.log('⏭️ Song ended, advancing...');
+        isPlaying = false;
+        fetch(`/api/advance?key=${encodeURIComponent(authToken)}`, { method: 'POST' })
+          .catch(() => {});
+      };
+      
+      // Handle errors
+      audioPlayer.onerror = (e) => {
+        console.error('❌ Audio error:', e);
+        setTimeout(() => {
+          if (!isPlaying) {
+            unlockAudio();
+          }
+        }, 1000);
+      };
+    }
 
     function render(queue) {
       if (!queue || queue.length === 0) {
         content.innerHTML = '<div class="empty">Belum ada request lagu... ketik !play judul lagu</div>';
-        if (advanceTimer) {
-          clearTimeout(advanceTimer);
-          advanceTimer = null;
-        }
+        audioPlayer.pause();
+        audioPlayer.src = '';
+        isPlaying = false;
         return;
       }
 
@@ -179,7 +272,7 @@
           <div class="artist">${escapeHtml(current.artist)}</div>
           <div class="status">
             <span class="dot"></span>
-            Streaming via yt-dlp ➜ VLC/mpv
+            Streaming from server
           </div>
         </div>
       `;
@@ -195,16 +288,15 @@
 
       content.innerHTML = html;
 
-      // Auto-advance timer (safety net)
-      // If player doesn't send advance after ~5 minutes, force skip
-      if (advanceTimer) {
-        clearTimeout(advanceTimer);
+      // Play audio if videoId exists
+      if (current.videoId) {
+        const currentSrc = audioPlayer.src;
+        const newSrc = `${window.location.protocol}//${window.location.host}/api/stream?videoId=${current.videoId}&key=${encodeURIComponent(authToken)}`;
+        
+        if (!currentSrc.includes(current.videoId) || audioPlayer.paused) {
+          playAudio(current.videoId);
+        }
       }
-      // Comment out or adjust as needed
-      // advanceTimer = setTimeout(() => {
-      //   fetch(`/api/advance?key=${encodeURIComponent(authToken)}`, { method: 'POST' })
-      //     .catch(() => {});
-      // }, 300000); // 5 minutes
     }
 
     function escapeHtml(str) {
@@ -227,7 +319,61 @@
       };
     }
 
+    // === MULTIPLE AUTOPLAY TRIGGERS ===
+
+    // 1. On load
+    window.addEventListener('load', () => {
+      console.log('📄 Page loaded');
+      setTimeout(unlockAudio, 300);
+    });
+
+    // 2. On click anywhere
+    document.addEventListener('click', () => {
+      unlockAudio();
+    });
+
+    // 3. On touch
+    document.addEventListener('touchstart', () => {
+      unlockAudio();
+    });
+
+    // 4. On visibility change
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        setTimeout(unlockAudio, 200);
+      }
+    });
+
+    // 5. OBS specific - try every 2 seconds for first 10 seconds
+    let obsRetryCount = 0;
+    const obsRetryInterval = setInterval(() => {
+      if (obsRetryCount < 5) {
+        unlockAudio();
+        obsRetryCount++;
+      } else {
+        clearInterval(obsRetryInterval);
+      }
+    }, 2000);
+
+    // 6. If in iframe (OBS), try to trigger via postMessage
+    if (window.frameElement) {
+      console.log('📺 Running in OBS iframe');
+      // Try to request user interaction
+      window.parent.postMessage('requestAudio', '*');
+    }
+
+    // 7. MutationObserver - play when DOM changes
+    const observer = new MutationObserver(() => {
+      if (audioPlayer.src && audioPlayer.paused) {
+        unlockAudio();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Start connection
     connect();
+
+    console.log('🎵 Audio player ready with ultimate autoplay fix');
   </script>
 </body>
 </html>
