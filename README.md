@@ -9,10 +9,15 @@ WebSocket → overlay (nampilin info + benar-benar memutar lagu via YouTube).
 
 ```
 backend/           Go server: command parser, queue, WebSocket hub, panggil sidecar buat search
+backend/overlay/   index.html — di-embed langsung ke binary Go (go:embed), diserve di /overlay/
 music-search/      Sidecar Python (Flask + ytmusicapi) — resolve judul/artist/videoId dari query bebas
 tiktok-connector/  Sidecar Node (tiktok-live-connector) — forward comment TikTok live asli ke backend
-overlay/           index.html — dipasang sebagai Browser Source di OBS, sekaligus jadi player YouTube
 ```
+
+Overlay sengaja ditaruh di dalam `backend/` (bukan folder terpisah di root) dan
+di-embed ke binary lewat `go:embed` — supaya kalau backend di-deploy dengan
+root directory `backend/` (misalnya di Railway), file overlay-nya tetap ikut
+kebawa dan nggak 404, nggak peduli apapun working directory servernya.
 
 Kenapa ada tiga service terpisah: `ytmusicapi` cuma tersedia di Python, dan
 client TikTok Live yang paling matang ada di Node — masing-masing bahasa

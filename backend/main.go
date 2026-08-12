@@ -1,11 +1,16 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 )
+
+//go:embed overlay
+var overlayFS embed.FS
 
 type CommentPayload struct {
 	Username string `json:"username"`
@@ -107,8 +112,15 @@ func main() {
 	})
 
 	// Serve the overlay's static files at /overlay/ — this is the URL
-	// you paste into OBS as a Browser Source.
-	mux.Handle("/overlay/", http.StripPrefix("/overlay/", http.FileServer(http.Dir("../overlay"))))
+	// you paste into OBS as a Browser Source. Embedded into the binary
+	// (rather than served from a relative "../overlay" path) so it works
+	// regardless of the working directory or deployment root — e.g. when
+	// only the backend/ subfolder is uploaded as the build context.
+	overlayRoot, err := fs.Sub(overlayFS, "overlay")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/overlay/", http.StripPrefix("/overlay/", http.FileServer(http.FS(overlayRoot))))
 
 	addr := ":8080"
 	log.Println("song-request backend listening on", addr)
