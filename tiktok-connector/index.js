@@ -37,7 +37,15 @@ if (!backendSecret) {
 // library version destructure the second argument without defaulting
 // it to {} themselves, so omitting it throws "Cannot read properties
 // of undefined (reading 'processInitialData')".
-const connection = new TikTokLiveConnection(username, {});
+//
+// processInitialData: false is the important one here — by default the
+// library replays a batch of *recent chat history* as CHAT events right
+// after connecting. Every deploy/restart reconnects from scratch, so
+// without this, every redeploy re-fires old "!play" comments from
+// whatever was said in the last minute or so before the restart.
+const connection = new TikTokLiveConnection(username, {
+  processInitialData: false,
+});
 
 async function forwardComment(uniqueId, comment) {
   try {
