@@ -68,41 +68,41 @@ connection.connect()
     process.exit(1);
   });
 
-// Yang asli pake WebcastEvent.CHAT
+// === FILTER OLD COMMENTS ===
+let connectionStartTime = Date.now();
+const processedComments = new Set();
+const MAX_COMMENT_CACHE = 500;
+
 connection.on(WebcastEvent.CHAT, (data) => {
-  // === EXTRACT USERNAME ===
-  // Dari data di atas, username ada di:
-  // - data.common.displayId  (✅ "aditgusgianar")
-  // - data.user?.displayId   (alternatif)
-  // - data.uniqueId          (alternatif)
+  // 1. Filter berdasarkan timestamp
+  const commentTime = data.createTime || data.common?.createTime || 0;
+  const diff = (Date.now() - commentTime * 1000) / 1000;
 
-  const uniqueId = data.common?.displayId ||
-    data.user?.displayId ||
-    data.uniqueId ||
-    data.userId ||
-    data.from?.userId ||
-    'unknown';
+  // Abaikan comment yang lebih dari 10 detik yang lalu
+  if (diff > 10) {
+    console.log(`⏭️ Skipping old comment (${Math.round(diff)}s ago)`);
+    return;
+  }
 
-  // === EXTRACT COMMENT ===
-  // Comment ada di:
-  // - data.comment
-  // - data.content
-  // - data.message
+  // 2. Filter duplicate (by comment ID)
+  const commentId = data.id || data.commentId || `${data.common?.displayId}_${data.content}`;
+  if (processedComments.has(commentId)) {
+    console.log(`⏭️ Skipping duplicate: ${commentId}`);
+    return;
+  }
 
-  const comment = data.comment ||
-    data.content ||
-    data.message ||
-    data.text ||
-    '';
+  processedComments.add(commentId);
+  if (processedComments.size > MAX_COMMENT_CACHE) {
+    const first = processedComments.values().next().value;
+    processedComments.delete(first);
+  }
+
+  // 3. Extract data
+  const uniqueId = data.common?.displayId || data.user?.displayId || 'unknown';
+  const comment = data.content || data.comment || '';
 
   console.log(`💬 [${uniqueId}]: ${comment}`);
-
-  // Forward ke backend
-  if (uniqueId !== 'unknown' && comment) {
-    forwardComment(uniqueId, comment);
-  } else {
-    console.log('⚠️ Could not extract:', { uniqueId, comment });
-  }
+  forwardComment(uniqueId, comment);
 });
 
 connection.on(WebcastEvent.DISCONNECTED, () => {
