@@ -37,23 +37,68 @@ python app.py
 ```bash
 cd backend
 go mod tidy
-BROADCASTER_USERNAME=nama_tiktok_kamu go run .
+BROADCASTER_USERNAME=nama_tiktok_kamu \
+BACKEND_SHARED_SECRET=isi_dengan_string_acak_panjang \
+OVERLAY_TOKEN=isi_dengan_string_acak_panjang_lain \
+go run .
 ```
 
 **Terminal 3 — TikTok Live connector (nyala bareng pas kamu live):**
 ```bash
 cd tiktok-connector
 npm install
-TIKTOK_USERNAME=nama_tiktok_kamu node index.js
+TIKTOK_USERNAME=nama_tiktok_kamu \
+BACKEND_SHARED_SECRET=samain_dengan_punya_backend \
+node index.js
 ```
 Ini connect ke room live kamu (harus lagi live!) dan forward tiap comment
 ke `/api/comment` backend secara otomatis — persis kayak curl manual yang
 dijelaskan di bawah, tapi real-time dari viewer beneran.
 
-Lalu pasang `http://localhost:8080/overlay/` sebagai **Browser Source** di
-OBS. Di properties Browser Source, centang **"Control audio via OBS"** —
-tanpa ini, sebagian besar browser (termasuk yang dipakai OBS) memblokir
-autoplay audio dan lagu nggak akan bunyi.
+Lalu pasang `http://localhost:8080/overlay/?key=isi_dengan_OVERLAY_TOKEN`
+sebagai **Browser Source** di OBS (token-nya harus sama persis dengan
+`OVERLAY_TOKEN` di atas). Di properties Browser Source, centang
+**"Control audio via OBS"** — tanpa ini, sebagian besar browser (termasuk
+yang dipakai OBS) memblokir autoplay audio dan lagu nggak akan bunyi.
+
+### Soal keamanan (`BACKEND_SHARED_SECRET` & `OVERLAY_TOKEN`)
+
+Dua env var ini **opsional tapi sangat disarankan begitu backend bisa
+diakses dari internet** (misal habis deploy ke Railway):
+
+- **`BACKEND_SHARED_SECRET`** — dicek di `/api/comment` lewat header
+  `Authorization: Bearer <secret>`. Tanpa ini, siapa aja yang tau URL
+  backend kamu bisa POST comment palsu, spam `!play`, atau (kalau tau/tebak
+  username broadcaster kamu) trigger `!skip`/`!clearqueue`. Harus **sama
+  persis** di backend dan di `tiktok-connector`.
+- **`OVERLAY_TOKEN`** — dicek di `/overlay/`, `/ws`, `/api/queue`, dan
+  `/api/advance` lewat query param `?key=...`. Tanpa ini, URL overlay
+  publik bisa dibuka siapa aja yang tau linknya.
+
+Kalau env var-nya nggak diisi, backend tetap jalan (buat kemudahan testing
+lokal) tapi bakal nge-log warning di startup bahwa endpoint itu terbuka.
+Isi keduanya dengan string acak yang panjang (misal `openssl rand -hex 32`),
+bukan kata yang gampang ditebak.
+
+### Deploy ke Railway (3 service dari repo yang sama)
+
+Buat 3 service, masing-masing dengan **root directory** yang beda:
+
+| Service       | Root directory     | Publicly exposed? |
+|---------------|---------------------|---------|
+| backend       | `backend`           | Ya — ini yang jadi overlay URL |
+| music-search  | `music-search`       | Tidak — internal only |
+| tiktok-connector | `tiktok-connector` | Tidak — outbound only, gak perlu port |
+
+Env vars:
+- **backend**: `BROADCASTER_USERNAME`, `BACKEND_SHARED_SECRET`, `OVERLAY_TOKEN`,
+  dan `MUSIC_SEARCH_URL=http://music-search.railway.internal:${{music-search.PORT}}/search`
+  (pakai referensi variabel Railway biar port-nya otomatis sinkron)
+- **tiktok-connector**: `TIKTOK_USERNAME`, `BACKEND_SHARED_SECRET` (samain
+  dengan punya backend), `BACKEND_URL=https://<backend-service>.up.railway.app/api/comment`
+
+Overlay URL buat OBS jadi:
+`https://<backend-service>.up.railway.app/overlay/?key=<OVERLAY_TOKEN>`
 
 ⚠️ `tiktok-live-connector` itu unofficial (reverse-engineered), bisa putus
 kalau TikTok ubah protokol internal mereka — kalau connect gagal, coba

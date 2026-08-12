@@ -15,6 +15,8 @@ Endpoint:
     GET /search?q=<query>  ->  {"title": "...", "artist": "...", "videoId": "..."}
 """
 
+import os
+
 from flask import Flask, request, jsonify
 from ytmusicapi import YTMusic
 
@@ -55,5 +57,8 @@ def health():
 
 
 if __name__ == "__main__":
-    # Port 5000 — matches MUSIC_SEARCH_URL default in the Go backend.
-    app.run(host="0.0.0.0", port=5000)
+    # Respect Railway's injected PORT (required for internal networking to
+    # find this service); fall back to 5000, which matches the Go
+    # backend's default MUSIC_SEARCH_URL for local dev.
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

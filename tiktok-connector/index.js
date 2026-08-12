@@ -13,8 +13,11 @@
 //   TIKTOK_USERNAME=your_tiktok_handle node index.js
 //
 // Env vars:
-//   TIKTOK_USERNAME   required — TikTok handle to watch (without @), must be live
-//   BACKEND_URL       optional — where to POST comments, defaults to http://localhost:8080/api/comment
+//   TIKTOK_USERNAME       required — TikTok handle to watch (without @), must be live
+//   BACKEND_URL           optional — where to POST comments, defaults to http://localhost:8080/api/comment
+//   BACKEND_SHARED_SECRET optional — must match the backend's BACKEND_SHARED_SECRET env var;
+//                          required once the backend is publicly reachable, otherwise
+//                          anyone who finds the URL can POST fake comments to it.
 
 const { TikTokLiveConnection, WebcastEvent } = require('tiktok-live-connector');
 
@@ -25,14 +28,26 @@ if (!username) {
 }
 
 const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080/api/comment';
+const backendSecret = process.env.BACKEND_SHARED_SECRET || '';
+if (!backendSecret) {
+  console.warn('WARNING: BACKEND_SHARED_SECRET not set — requests to the backend are unauthenticated.');
+}
 
-const connection = new TikTokLiveConnection(username);
+// Pass an explicit options object — some internal defaults in this
+// library version destructure the second argument without defaulting
+// it to {} themselves, so omitting it throws "Cannot read properties
+// of undefined (reading 'processInitialData')".
+const connection = new TikTokLiveConnection(username, {});
 
 async function forwardComment(uniqueId, comment) {
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (backendSecret) {
+      headers['Authorization'] = `Bearer ${backendSecret}`;
+    }
     const res = await fetch(backendUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ username: uniqueId, comment }),
     });
     if (!res.ok && res.status !== 204) {

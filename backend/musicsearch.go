@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
 // SongResult is what we need from a search: just title + artist.
@@ -33,6 +34,7 @@ func ResolveSong(query string) (SongResult, error) {
 	if base == "" {
 		base = "http://localhost:5000/search"
 	}
+	base = normalizeSearchURL(base)
 
 	endpoint := base + "?" + url.Values{"q": {query}}.Encode()
 
@@ -60,4 +62,22 @@ func ResolveSong(query string) (SongResult, error) {
 		Artist:  parsed.Artist,
 		VideoID: parsed.VideoID,
 	}, nil
+}
+
+// normalizeSearchURL fills in gaps commonly left in MUSIC_SEARCH_URL when
+// set to a bare Railway internal hostname (e.g. "music-search.railway.internal")
+// instead of a full URL: adds "http://" if no scheme is present, and appends
+// "/search" if no path is present.
+func normalizeSearchURL(raw string) string {
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/search"
+	}
+	return u.String()
 }

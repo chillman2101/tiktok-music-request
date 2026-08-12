@@ -140,6 +140,10 @@
     let ytReady = false;
     let currentVideoId = null;
 
+    // Auth token passed in this page's own URL (?key=...), forwarded to
+    // the WebSocket and /api/advance so they pass the backend's check too.
+    const authToken = new URLSearchParams(location.search).get('key') || '';
+
     // Loaded by the YouTube IFrame API script once it's ready.
     window.onYouTubeIframeAPIReady = () => {
       ytPlayer = new YT.Player('player-mount', {
@@ -150,7 +154,7 @@
           onReady: () => { ytReady = true; },
           onStateChange: (e) => {
             if (e.data === YT.PlayerState.ENDED) {
-              fetch('/api/advance', { method: 'POST' }).catch(() => {});
+              fetch(`/api/advance?key=${encodeURIComponent(authToken)}`, { method: 'POST' }).catch(() => {});
             }
           },
         },
@@ -212,8 +216,10 @@
     }
 
     function connect() {
-      // Same host/port that served this page.
-      const ws = new WebSocket(`ws://${location.host}/ws`);
+      // Same host/port that served this page. wss:// when the page itself
+      // is loaded over https (e.g. deployed on Railway), ws:// for local dev.
+      const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${wsProtocol}//${location.host}/ws?key=${encodeURIComponent(authToken)}`);
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         render(data.queue);
