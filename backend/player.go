@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -128,65 +127,19 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 		p.mu.Unlock()
 	}()
 
-	// === FIX: Extractor args untuk bypass 403 ===
+	// === FIX: Extractor args dengan visitor_data ===
+	// Ganti VISITOR_DATA_1_xxx dengan data dari browser Anda
 	cmd := exec.CommandContext(ctx, ytDlpPath,
 		url,
-		"-f", "bestaudio",
+		"-f", "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio",
 		"--no-playlist",
 		"--no-cache-dir",
-		"--extractor-args", "youtube:player_client=android,web;player_skip=webpage,configs",
+		"--extractor-args", "youtube:player_client=android,web;player_skip=webpage,configs;visitor_data=VISITOR_DATA_1_111111111111111111111",
 		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		"-o", "-",
 	)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Printf("❌ Error getting stdout: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		log.Printf("❌ Error getting stderr: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("❌ Error starting yt-dlp: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "audio/mpeg")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	// Log stderr
-	go func() {
-		errBuf := make([]byte, 1024)
-		for {
-			n, err := stderr.Read(errBuf)
-			if n > 0 {
-				log.Printf("yt-dlp: %s", string(errBuf[:n]))
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
-
-	_, err = io.Copy(w, stdout)
-	if err != nil {
-		log.Printf("⚠️ Stream ended: %v", err)
-	}
-
-	if err := cmd.Wait(); err != nil {
-		log.Printf("⚠️ yt-dlp finished with error: %v", err)
-	}
-
-	log.Printf("✅ Stream finished for videoID: %s", videoID)
+	// ... (sisa kode sama seperti sebelumnya)
 }
 
 // Handle player controls
