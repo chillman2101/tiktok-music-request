@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"sync"
 )
@@ -100,7 +101,6 @@ func (p *Player) HandleAdvance(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ServeAudioStream streams audio directly to browser (works everywhere!)
 func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 	videoID := r.URL.Query().Get("videoId")
 	if videoID == "" {
@@ -110,27 +110,32 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("🎵 Streaming audio for videoID: %s", videoID)
 
+	ytDlpPath := "/usr/local/bin/yt-dlp"
+	if _, err := os.Stat(ytDlpPath); os.IsNotExist(err) {
+		ytDlpPath = "yt-dlp"
+	}
+
 	url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID)
 
-	// Create context with cancellation
 	ctx, cancel := context.WithCancel(r.Context())
 	p.mu.Lock()
 	p.cancelFunc = cancel
 	p.mu.Unlock()
 
-	// Cleanup on finish
 	defer func() {
 		p.mu.Lock()
 		p.cancelFunc = nil
 		p.mu.Unlock()
 	}()
 
-	// Use yt-dlp to stream audio directly to browser
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	// === FIX: Extractor args untuk bypass 403 ===
+	cmd := exec.CommandContext(ctx, ytDlpPath,
 		url,
 		"-f", "bestaudio",
 		"--no-playlist",
 		"--no-cache-dir",
+		"--extractor-args", "youtube:player_client=android,web;player_skip=webpage,configs",
+		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		"-o", "-",
 	)
 
@@ -148,19 +153,17 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start yt-dlp
 	if err := cmd.Start(); err != nil {
 		log.Printf("❌ Error starting yt-dlp: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Set headers for streaming
 	w.Header().Set("Content-Type", "audio/mpeg")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Log stderr in background (for debugging)
+	// Log stderr
 	go func() {
 		errBuf := make([]byte, 1024)
 		for {
@@ -174,13 +177,11 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Stream to response
 	_, err = io.Copy(w, stdout)
 	if err != nil {
 		log.Printf("⚠️ Stream ended: %v", err)
 	}
 
-	// Wait for command to finish
 	if err := cmd.Wait(); err != nil {
 		log.Printf("⚠️ yt-dlp finished with error: %v", err)
 	}
