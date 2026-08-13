@@ -179,6 +179,11 @@ func main() {
 			return
 
 		default:
+			// Not a recognized command — still forward it to the overlay
+			// as a bubble comment, since most chat isn't song requests.
+			if strings.TrimSpace(payload.Comment) != "" {
+				hub.BroadcastComment(payload.Username, payload.Comment)
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -214,6 +219,16 @@ func main() {
 		}
 		status := player.GetStatus()
 		json.NewEncoder(w).Encode(status)
+	})
+
+	// GET /api/lyrics - synced lyrics lookup (LRCLIB), for the overlay's
+	// lyrics display while a song plays.
+	mux.HandleFunc("/api/lyrics", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, overlayToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		HandleLyrics(w, r)
 	})
 
 	// GET /api/stream - audio stream (works locally and on Railway!)

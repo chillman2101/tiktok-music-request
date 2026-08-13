@@ -18,12 +18,15 @@
     width: 380px;
   }
   .now-playing {
-    background: linear-gradient(135deg, rgba(30, 30, 30, 0.85), rgba(20, 20, 20, 0.85));
-    border-left: 4px solid #ff2d55;
-    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(35, 30, 38, 0.7), rgba(18, 16, 20, 0.75));
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid #ff2d55;
+    border-radius: 14px;
     padding: 14px 16px;
     margin-bottom: 10px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 45, 85, 0.05) inset;
     animation: slideIn 0.4s ease;
   }
   .now-playing .top-row {
@@ -102,8 +105,11 @@
   }
   
   .queue-item {
-    background: rgba(0, 0, 0, 0.5);
-    border-radius: 6px;
+    background: rgba(20, 18, 22, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
     padding: 7px 12px;
     margin-bottom: 4px;
     font-size: 13px;
@@ -137,7 +143,62 @@
     color: #999;
     font-style: italic;
   }
-  
+
+  /* Lyrics panel — synced lines from LRCLIB, shown while a song plays */
+  #lyrics-panel {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(720px, 80vw);
+    text-align: center;
+    pointer-events: none;
+  }
+  #lyrics-panel .line {
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.35);
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+    transition: color 0.3s ease, font-size 0.3s ease, transform 0.3s ease;
+    padding: 2px 0;
+  }
+  #lyrics-panel .line.current {
+    font-size: 21px;
+    font-weight: 700;
+    color: #fff;
+    transform: scale(1.02);
+  }
+
+  /* Comment bubbles — non-command chat, floats up and fades */
+  #bubble-layer {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 320px;
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .comment-bubble {
+    background: rgba(20, 18, 22, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #eee;
+    max-width: 100%;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    animation: bubbleIn 0.35s ease, bubbleOut 0.4s ease 4.6s forwards;
+  }
+  .comment-bubble .username {
+    color: #ff5c85;
+    font-weight: 700;
+    margin-right: 6px;
+  }
+
   @keyframes slideIn {
     from { opacity: 0; transform: translateX(-12px); }
     to { opacity: 1; transform: translateX(0); }
@@ -146,18 +207,31 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
   }
+  @keyframes bubbleIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes bubbleOut {
+    from { opacity: 1; }
+    to { opacity: 0; transform: translateY(-8px); }
+  }
 </style>
 </head>
 <body>
   <div id="panel">
     <div id="content"><div class="empty">Belum ada request lagu...</div></div>
   </div>
-  
+
+  <div id="lyrics-panel"></div>
+  <div id="bubble-layer"></div>
+
   <audio id="audio-player" preload="auto"></audio>
 
   <script>
     const content = document.getElementById('content');
     const audioPlayer = document.getElementById('audio-player');
+    const lyricsPanel = document.getElementById('lyrics-panel');
+    const bubbleLayer = document.getElementById('bubble-layer');
     let currentSong = null;
     let isPlaying = false;
     let audioContext = null;
@@ -250,12 +324,16 @@
         audioPlayer.pause();
         audioPlayer.src = '';
         isPlaying = false;
+        lyricsPanel.innerHTML = '';
+        lyricsSongKey = null;
+        lyricLines = [];
         return;
       }
 
       const [current, ...upNext] = queue;
       currentSong = current;
-      
+      loadLyrics(current);
+
       const currentRequester = current.requestedBy || '';
       let html = `
         <div class="now-playing">
@@ -305,15 +383,82 @@
       return div.innerHTML;
     }
 
+    // === Lyrics (LRCLIB, synced to audioPlayer.currentTime) ===
+    let lyricLines = [];
+    let lyricsSongKey = null;
+
+    async function loadLyrics(song) {
+      const key = `${song.title}|${song.artist}`;
+      if (key === lyricsSongKey) return;
+      lyricsSongKey = key;
+      lyricLines = [];
+      lyricsPanel.innerHTML = '';
+
+      try {
+        const res = await fetch(
+          `/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}&key=${encodeURIComponent(authToken)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        lyricLines = data.lines || [];
+      } catch (e) {
+        console.log('lyrics fetch failed:', e);
+      }
+    }
+
+    function updateLyricsDisplay() {
+      if (lyricLines.length === 0) return;
+      const t = audioPlayer.currentTime;
+
+      let idx = -1;
+      for (let i = 0; i < lyricLines.length; i++) {
+        if (lyricLines[i].time <= t) idx = i;
+        else break;
+      }
+      if (idx === -1) return;
+
+      const current = lyricLines[idx];
+      const next = lyricLines[idx + 1];
+      if (lyricsPanel.dataset.line === String(idx)) return;
+      lyricsPanel.dataset.line = String(idx);
+
+      lyricsPanel.innerHTML = `
+        <div class="line current">${escapeHtml(current.text)}</div>
+        ${next ? `<div class="line">${escapeHtml(next.text)}</div>` : ''}
+      `;
+    }
+
+    audioPlayer.addEventListener('timeupdate', updateLyricsDisplay);
+
+    // === Comment bubbles (non-command chat) ===
+    function showCommentBubble(username, comment) {
+      const bubble = document.createElement('div');
+      bubble.className = 'comment-bubble';
+      bubble.innerHTML = `<span class="username">@${escapeHtml(username)}</span>${escapeHtml(comment)}`;
+      bubbleLayer.appendChild(bubble);
+
+      // Cap how many bubbles pile up on screen at once
+      while (bubbleLayer.children.length > 6) {
+        bubbleLayer.removeChild(bubbleLayer.firstChild);
+      }
+
+      setTimeout(() => bubble.remove(), 5100);
+    }
+
     function connect() {
       const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${wsProtocol}//${location.host}/ws?key=${encodeURIComponent(authToken)}`);
-      
+
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        if (data.type === 'comment') {
+          showCommentBubble(data.username, data.comment);
+          return;
+        }
+        // Default/legacy shape (and type === 'queue'): a queue update.
         render(data.queue);
       };
-      
+
       ws.onclose = () => {
         setTimeout(connect, 2000);
       };
