@@ -14,15 +14,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o songreque
 # ====================
 FROM alpine:latest
 
-# Install yt-dlp dan dependencies
+# Install dependencies (tanpa pip)
 RUN apk add --no-cache \
     ca-certificates \
-    python3 \
-    py3-pip \
     ffmpeg \
-    && pip3 install --no-cache-dir yt-dlp \
-    && ln -s /usr/bin/python3 /usr/bin/python \
+    python3 \
+    wget \
     && rm -rf /var/cache/apk/*
+
+# Install yt-dlp via binary (bukan pip!)
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
 WORKDIR /app
 COPY --from=builder /app/songrequest .
