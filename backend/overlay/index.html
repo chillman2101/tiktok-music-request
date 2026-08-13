@@ -393,16 +393,23 @@
       lyricsSongKey = key;
       lyricLines = [];
       lyricsPanel.innerHTML = '';
+      delete lyricsPanel.dataset.line;
 
       try {
-        const res = await fetch(
-          `/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}&key=${encodeURIComponent(authToken)}`
-        );
-        if (!res.ok) return;
+        const url = `/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}&key=${encodeURIComponent(authToken)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          console.warn(`🎤 Lyrics fetch failed (${res.status}) for "${song.title}" — ${url}`);
+          return;
+        }
         const data = await res.json();
         lyricLines = data.lines || [];
+        console.log(`🎤 Loaded ${lyricLines.length} lyric lines for "${song.title}"`);
+        if (lyricLines.length === 0) {
+          console.log('🎤 No synced lyrics found on LRCLIB for this song.');
+        }
       } catch (e) {
-        console.log('lyrics fetch failed:', e);
+        console.warn('🎤 Lyrics fetch error:', e);
       }
     }
 
