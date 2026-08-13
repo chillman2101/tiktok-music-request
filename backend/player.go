@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -139,7 +140,54 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 		"-o", "-",
 	)
 
-	// ... (sisa kode sama seperti sebelumnya)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Printf("❌ Error getting stdout: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("❌ Error getting stderr: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("❌ Error starting yt-dlp: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Log stderr
+	go func() {
+		errBuf := make([]byte, 1024)
+		for {
+			n, err := stderr.Read(errBuf)
+			if n > 0 {
+				log.Printf("yt-dlp: %s", string(errBuf[:n]))
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	_, err = io.Copy(w, stdout)
+	if err != nil {
+		log.Printf("⚠️ Stream ended: %v", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		log.Printf("⚠️ yt-dlp finished with error: %v", err)
+	}
+
+	log.Printf("✅ Stream finished for videoID: %s", videoID)
 }
 
 // Handle player controls
