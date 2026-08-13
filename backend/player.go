@@ -169,7 +169,7 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("🚀 Executing yt-dlp with cookies: %v", args)
 
-	cmd := exec.CommandContext(ctx, ytDlpPath, args...)
+	cmd := exec.CommandContext(context.Background(), ytDlpPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
