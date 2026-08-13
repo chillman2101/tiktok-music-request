@@ -1,7 +1,7 @@
 # ====================
 # Stage 1: Build Backend
 # ====================
-FROM golang:1.23-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -12,19 +12,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o songreque
 # ====================
 # Stage 2: Runtime
 # ====================
-FROM alpine:latest
+FROM alpine:edge
 
-# Install dependencies (tanpa pip)
+# Install yt-dlp dari Alpine repository
 RUN apk add --no-cache \
     ca-certificates \
     ffmpeg \
-    python3 \
-    wget \
+    yt-dlp \
     && rm -rf /var/cache/apk/*
 
-# Install yt-dlp via binary (bukan pip!)
-RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
+# Verify yt-dlp installed
+RUN yt-dlp --version
 
 WORKDIR /app
 COPY --from=builder /app/songrequest .
