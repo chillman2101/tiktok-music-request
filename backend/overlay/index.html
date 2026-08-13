@@ -399,7 +399,7 @@
         const url = `/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}&key=${encodeURIComponent(authToken)}`;
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn(`🎤 Lyrics fetch failed (${res.status}) for "${song.title}" — ${url}`);
+          console.warn(`🎤 Lyrics fetch failed (${res.status}) for "${song.title}" by "${song.artist}"`);
           return;
         }
         const data = await res.json();
