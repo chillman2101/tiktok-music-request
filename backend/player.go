@@ -110,35 +110,66 @@ func (p *Player) ServeAudioStream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("🎵 Streaming audio for videoID: %s", videoID)
 
+	// Atau kalo mau lebih fleksibel, coba beberapa path
+	cookiePaths := []string{
+		"/app/backend/cookies.txt", // Railway (Docker)
+		"./backend/cookies.txt",    // Local run
+		"./cookies.txt",            // Fallback
+	}
+
+	var cookieFilePath string
+	for _, path := range cookiePaths {
+		if _, err := os.Stat(path); err == nil {
+			cookieFilePath = path
+			log.Printf("✅ Cookies found at %s", path)
+			break
+		}
+	}
+
+	if cookieFilePath == "" {
+		log.Printf("⚠️ No cookie file found. Trying without cookies.")
+	}
+
+	// Di local untuk testing, sesuaikan path-nya
+	// cookieFilePath := "./cookies.txt"
+
+	// Cek apakah file cookies ada
+	if _, err := os.Stat(cookieFilePath); os.IsNotExist(err) {
+		log.Printf("⚠️ Cookie file not found at %s. Trying without cookies.", cookieFilePath)
+		cookieFilePath = "" // Set kosong agar tidak dipakai
+	} else {
+		log.Printf("✅ Cookies found at %s", cookieFilePath)
+	}
+
+	url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID)
+
+	// ... (context setup, defer cancel) ...
+
+	// Bangun perintah yt-dlp dengan cookies
 	ytDlpPath := "/usr/local/bin/yt-dlp"
 	if _, err := os.Stat(ytDlpPath); os.IsNotExist(err) {
 		ytDlpPath = "yt-dlp"
 	}
 
-	url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID)
-
-	ctx, cancel := context.WithCancel(r.Context())
-	p.mu.Lock()
-	p.cancelFunc = cancel
-	p.mu.Unlock()
-
-	defer func() {
-		p.mu.Lock()
-		p.cancelFunc = nil
-		p.mu.Unlock()
-	}()
-
-	// === FIX: Extractor args dengan visitor_data ===
-	// Ganti VISITOR_DATA_1_xxx dengan data dari browser Anda
-	cmd := exec.CommandContext(ctx, ytDlpPath,
+	// Argumen dasar
+	args := []string{
 		url,
-		"-f", "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio",
+		"-f", "bestaudio",
 		"--no-playlist",
 		"--no-cache-dir",
-		"--extractor-args", "youtube:player_client=android,web;player_skip=webpage,configs;visitor_data=VISITOR_DATA_1_111111111111111111111",
 		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		"-o", "-",
-	)
+	}
+
+	// Tambahkan argumen cookies jika file tersedia
+	if cookieFilePath != "" {
+		// Sisipkan argumen cookies sebelum URL atau di awal
+		args = append([]string{"--cookies", cookieFilePath}, args...)
+	}
+
+	log.Printf("🚀 Executing yt-dlp with cookies: %v", args)
+
+	cmd := exec.CommandContext(ctx, ytDlpPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -25,8 +25,20 @@ RUN apk add --no-cache \
 RUN yt-dlp --version
 
 WORKDIR /app
+
+# === COPY BACKEND BINARY ===
 COPY --from=builder /app/songrequest .
 COPY --from=builder /app/overlay ./overlay
+
+# === 🔥 COPY COOKIES FILE 🔥 ===
+# Asumsi cookies.txt ada di folder backend (sejajar dengan go.mod)
+COPY cookies.txt ./backend/cookies.txt
+
+# Atau kalo cookies.txt ada di root project
+# COPY cookies.txt ./cookies.txt
+
+# Create directory for backend if needed
+RUN mkdir -p /app/backend && mv /app/backend/cookies.txt /app/backend/ 2>/dev/null || true
 
 EXPOSE 8080
 CMD ["./songrequest"]
